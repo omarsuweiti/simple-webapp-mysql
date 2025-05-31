@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-webapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: simple-webapp
+  template:
+    metadata:
+      labels:
+        app: simple-webapp
+    spec:
+      containers:
+      - name: webapp
+        image: "${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/simple-webapp:$SHORT_SHA"
+        ports:
+        - containerPort: 5000            # ← change this to whatever your Dockerfile EXPOSEs
+        env:
+        - name: DB_HOST
+          value: "${_DB_HOST}"
+        - name: DB_NAME
+          value: "${_DB_NAME}"
+        - name: DB_USER
+          value: "${_DB_USER}"
+        - name: DB_PASS
+          value: "${_DB_PASS}"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5000
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5000
