@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: webapp
-        image: "${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/simple-webapp:$SHORT_SHA"
+        image: me-central2-docker.pkg.dev/omars-playground-omars/webapp-repo/simple-webapp:$SHORT_SHA
         ports:
         - containerPort: 5000            # ← change this to whatever your Dockerfile EXPOSEs
         env:
