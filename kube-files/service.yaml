@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-svc
+spec:
+  type: NodePort                  # required for GCE Ingress
+  selector:
+    app: simple-webapp
+  ports:
+    - port: 80
+      targetPort: 5000           # same containerPort as above
+      protocol: TCP

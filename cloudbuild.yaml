@@ -1,32 +1,124 @@
+# ┌───────────────────────────────────────────────────────────────┐
+# │  cloudbuild.yaml                                            │
+# │  (place this file in the root of your Git repo – not under  │
+# │   kube-files/, not under infra/, etc.)                      │
+# └───────────────────────────────────────────────────────────────┘
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 1) SUBSTITUTIONS:  (Your trigger must supply exactly these nine _VARIABLES.)
+#─────────────────────────────────────────────────────────────────────────────────
 substitutions:
-  _PROJECT: "${_PROJECT}"
-  _REGION:  "${_REGION}"
-  _REPO:    "${_REPO}"
-  _CLUSTER: "${_CLUSTER}"
+  _PROJECT:        "${_PROJECT}"
+  _REGION:         "${_REGION}"
+  _REPO:           "${_REPO}"
+  _CLUSTER:        "${_CLUSTER}"
   _CLUSTER_REGION: "${_CLUSTER_REGION}"
+  _DB_HOST:        "${_DB_HOST}"
+  _DB_NAME:        "${_DB_NAME}"
+  _DB_USER:        "${_DB_USER}"
+  _DB_PASS:        "${_DB_PASS}"
 
+# ────────────────────────────────────────────────────────────────────────────────
+# 2) STEPS:  All “- name:” entries must be indented exactly two spaces under steps:
+#─────────────────────────────────────────────────────────────────────────────────
 steps:
-- name: "gcr.io/cloud-builders/docker"
-  args:
-    - "build"
-    - "-t"
-    - "${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/simple-webapp:$SHORT_SHA"
-    - "."
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 1: Build the Docker image & push to Artifact Registry
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/simple-webapp:$SHORT_SHA"
+      - "."
 
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 2: Push the built image to Artifact Registry
+  #   (Note: “images:” below also records this image, but having this step
+  #    explicitly ensures it gets pushed even if your trigger didn’t specify an
+  #    images: block.)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/simple-webapp:$SHORT_SHA"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 3: Fetch GKE credentials (so “kubectl” can speak to your private cluster)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        gcloud container clusters get-credentials ${_CLUSTER} \
+          --region ${_CLUSTER_REGION} \
+          --project ${_PROJECT}
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 4: Create a Kubernetes Secret (db-credentials) containing your DB creds
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        # Install envsubst so we can interpolate _DB_* into the YAML below
+        apt-get update && apt-get install -y gettext-base
+
+        # Now write a “db-credentials” Secret YAML on the fly, substituting in
+        # _DB_HOST, _DB_NAME, _DB_USER, _DB_PASS.  Feel free to adjust which
+        # keys you store inside the Secret.
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: db-credentials
+        type: Opaque
+        stringData:
+          DB_HOST:     "${_DB_HOST}"
+          DB_NAME:     "${_DB_NAME}"
+          DB_USER:     "${_DB_USER}"
+          DB_PASSWORD: "${_DB_PASS}"
+        EOF
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 5: Apply your Service manifest (service.yaml) via envsubst → kubectl
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        # install gettext to get envsubst again (if not already cached from previous step)
+        apt-get update && apt-get install -y gettext-base
+
+        # Substitute any _VARIABLES in service.yaml and apply it
+        envsubst < kube-files/service.yaml | kubectl apply -f -
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 6: Apply your Deployment manifest (deployment.yaml) similarly
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        apt-get update && apt-get install -y gettext-base
+        envsubst < kube-files/deployment.yaml | kubectl apply -f -
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 7: (Optional) Apply Ingress, Networking objects, etc.
+  #              This example assumes you have ingress.yaml in kube-files/.
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/kubectl"
+    args:
+      - "apply"
+      - "-f"
+      - "kube-files/ingress.yaml"
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 3) IMAGES:  After the steps, list any images you want Cloud Build to record
+#─────────────────────────────────────────────────────────────────────────────────
 images:
   - "${_REGION}-docker.pkg.dev/${_PROJECT}/${_REPO}/simple-webapp:$SHORT_SHA"
-
-- name: "gcr.io/cloud-builders/gcloud"
-  entrypoint: "bash"
-  args:
-    - "-c"
-    - |
-      gcloud container clusters get-credentials ${_CLUSTER} \
-        --region ${_CLUSTER_REGION} \
-        --project ${_PROJECT}
-
-- name: "gcr.io/cloud-builders/kubectl"
-  args:
-    - "apply"
-    - "-f"
-    - "kube-files/"
